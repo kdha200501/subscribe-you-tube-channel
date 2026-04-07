@@ -1,0 +1,41 @@
+{
+  "name": "grab-you-tube-playlist",
+  "version": "1.0.0",
+  "description": "Grab playlist from YouTube",
+  "bin": {
+    "grab-you-tube-playlist": "cli.js"
+  },
+  "scripts": {
+    "start": "./cli.js",
+    "lint": "eslint **/*.js",
+    "lint:fix": "eslint --fix **/*.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "kdha200501@gmail.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kdha200501/grab-you-tube-playlist"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "find-process": "^1.4.4",
+    "yargs": "^15.4.1"
+  },
+  "keywords": [
+    "youtube",
+    "download",
+    "playlist",
+    "channel",
+    "yt-dlp",
+    "video"
+  ],
+  "devDependencies": {
+    "@types/yargs": "^15.0.9",
+    "eslint": "^7.9.0",
+    "eslint-config-prettier": "^6.11.0",
+    "eslint-plugin-prettier": "^3.1.4",
+    "husky": "^4.3.0",
+    "lint-staged": "^10.4.0",
+    "prettier": "^2.1.2"
+  }
+}
