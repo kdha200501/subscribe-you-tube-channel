@@ -1,9 +1,9 @@
 ## Description
 
-A CLI tool to download videos from YouTube channels and playlists using `yt-dlp`. It:
+A CLI tool to download videos from YouTube playlists using `yt-dlp`. It:
 
 - saves videos as `mp4` files
-- groups videos from the same subscription into a sub-folder
+- groups videos from the same playlist into a sub-folder
 - tracks downloaded videos using yt-dlp's download archive (avoids re-downloading)
 - supports limiting the number of videos per subscription
 
@@ -21,16 +21,21 @@ $ pip install yt-dlp
 $ brew install yt-dlp
 ```
 
-Find where it's installed:
+> [!TIP]
+>
+> Find where it's installed:
+>
+> ```shell
+> $ which yt-dlp
+> ```
 
-```shell
-$ which yt-dlp
-```
 
-`yt-dlp` will automatically use `ffmpeg` if available for merging formats. Install `ffmpeg` for best results:
+
+`yt-dlp` will automatically use `ffmpeg` if available. Install `ffmpeg`:
 
 ```shell
 $ brew install ffmpeg
+
 # or
 $ sudo apt install ffmpeg
 ```
@@ -43,9 +48,9 @@ $ sudo apt install ffmpeg
 
 ```shell
 $ npm i -g grab-you-tube-playlist
-$ mkdir my-youtube-downloads
-$ cd my-youtube-downloads
-$ grab-you-tube-playlist -i
+
+$ mkdir ~/.grab-you-tube-playlist
+$ grab-you-tube-playlist -i -C ~/.grab-you-tube-playlist
 ```
 
 ### Manage subscriptions
@@ -53,7 +58,7 @@ $ grab-you-tube-playlist -i
 Edit the sample subscription file with a real YouTube channel or playlist URL:
 
 ```shell
-$ nano subscriptions/sample.json
+$ vim ~/.grab-you-tube-playlist/subscriptions/sample.json
 ```
 
 Example subscription file:
@@ -68,13 +73,14 @@ Example subscription file:
 Add more subscriptions by creating additional JSON files:
 
 ```shell
-$ nano subscriptions/another-channel.json
+$ touch ~/.grab-you-tube-playlist/subscriptions/another-playlist.json
+$ vim ~/.grab-you-tube-playlist/subscriptions/another-playlist.json
 ```
 
 ### Run
 
 ```shell
-$ grab-you-tube-playlist -Y /path/to/yt-dlp
+$ grab-you-tube-playlist -C ~/.grab-you-tube-playlist -Y /usr/bin/yt-dlp
 ```
 
 ### Options
@@ -83,24 +89,25 @@ $ grab-you-tube-playlist -Y /path/to/yt-dlp
 $ grab-you-tube-playlist -h
 Usage: grab-you-tube-playlist [options]
 
+Examples:
+  Initialize working directory:
+    $ grab-you-tube-playlist -i -C ~/.grab-you-tube-playlist
+
+  Download with custom directories:
+    $ grab-you-tube-playlist -C ~/.grab-you-tube-playlist -o ~/Videos -Y
+    /usr/bin/yt-dlp
+
 Options:
   --version                 Show version number                        [boolean]
-  -d, --directory           Specify the working directory, defaults to cwd
-                                                                        [string]
+  -C, --directory           Specify the working directory
+                                   [string] [default: current working directory]
   -i, --init                Initialize the working directory           [boolean]
-  -D, --download-directory  Specify the download directory, defaults to
-                            downloads folder under the working directory[string]
-  -Y, --yt-dlp-bin          Specify the path to yt-dlp binary          [string]
+  -o, --download-directory  Specify the download directory
+   [string] [default: "downloads" directory under the current working directory]
+  -Y, --yt-dlp-bin          Specify the path to yt-dlp binary[string] [required]
   -q, --quiet               Do not output to stdout or stderr          [boolean]
   -h, --help                Show help                                  [boolean]
 ```
-
-### Subscription file format
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `url` | string | YouTube channel, playlist, or video URL |
-| `maxVideos` | number (optional) | Max number of recent videos to download |
 
 ### Run from crontab
 
@@ -111,5 +118,5 @@ $ sudo crontab -e
 Insert the following (adjust paths and schedule):
 
 ```
-min hr1,hr2 * * * grab-you-tube-playlist -d /path/to/working/directory -Y /path/to/yt-dlp >/dev/null 2>&1
+min hr1,hr2 * * * grab-you-tube-playlist -C ~/.grab-you-tube-playlist -o ~/Videos -Y /usr/bin/yt-dlp >/dev/null 2>&1
 ```

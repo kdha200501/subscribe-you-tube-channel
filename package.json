@@ -19,6 +19,7 @@
   "license": "ISC",
   "dependencies": {
     "find-process": "^1.4.4",
+    "rxjs": "^6.6.3",
     "yargs": "^15.4.1"
   },
   "keywords": [
