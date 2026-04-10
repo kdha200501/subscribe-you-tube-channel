@@ -1,10 +1,50 @@
 'use strict';
 
-const { readdir, readFile, access } = require('fs/promises');
-const { spawn } = require('child_process');
-const { Observable, of, from, defer } = require('rxjs');
-const { concatMap, map, mapTo, catchError } = require('rxjs/operators');
+const {
+  readdir,
+  readFile,
+  access,
+  mkdir,
+  writeFile,
+  unlink,
+} = require('fs/promises');
+const { join, parse, dirname, delimiter } = require('path');
+const process = require('process');
 const { findProcess } = require('find-process/lib/find_process');
+const { spawn } = require('child_process');
+const {
+  Observable,
+  of,
+  from,
+  defer,
+  forkJoin,
+  throwError,
+  EMPTY,
+} = require('rxjs');
+const {
+  switchMap,
+  concatMap,
+  map,
+  mapTo,
+  catchError,
+  last,
+  timeout,
+} = require('rxjs/operators');
+const moment = require('moment');
+
+/**
+ * Log a message to console if not in quiet mode
+ * @param {string} message - The message to log
+ * @param {boolean} quiet - If true, suppress output
+ * @returns {void}
+ */
+function log(message, quiet = false) {
+  if (quiet) {
+    return;
+  }
+
+  console.log(message);
+}
 
 /**
  * check if a process with the given PID is still running
@@ -49,9 +89,11 @@ function listSubscriptionFiles(readPath) {
  * @param {string} ytDlpBin path to yt-dlp binary
  * @param {string[]} args arguments to pass to yt-dlp
  * @param {boolean} captureStdout if true, emit captured stdout on success
+ * @param {boolean} quiet if true, log stdout and stderr
  * @returns {Observable<string>} emits stdout (if captured) on success, or an error on failure
  */
-function runYtDlp(ytDlpBin, args, captureStdout) {
+function runYtDlp(ytDlpBin, args, captureStdout, quiet) {
+  const nodeDirPath = dirname(process.execPath);
   return new Observable((subscriber) => {
     /*
     | **Index** | **Name**   | **Setting** | **What it means in your code**                               |
@@ -60,17 +102,48 @@ function runYtDlp(ytDlpBin, args, captureStdout) {
     | `[1]`     | **stdout** | `'pipe'`    | The main script "pipes" the child's output. You can listen to this to get the video data or progress logs. |
     | `[2]`     | **stderr** | `'pipe'`    | Errors or warning messages from the child are also piped back to you for handling. |
     */
-    const child = spawn(ytDlpBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(
+      ytDlpBin,
+      [...args, ...(quiet ? ['--quiet'] : ['--verbose', '--progress'])],
+      {
+        env: {
+          ...process.env,
+          PATH: `${nodeDirPath}${delimiter}${process.env.PATH}`,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    );
     const stdoutChunks = [];
     const stderrChunks = [];
 
     if (captureStdout) {
       child.stdout.on('data', (chunk) => stdoutChunks.push(chunk));
     }
-    child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
 
-    child.on('error', (err) => subscriber.error(err));
+    child.stderr.on('data', (chunk) => {
+      stderrChunks.push(chunk);
+
+      if (quiet) {
+        return;
+      }
+
+      process.stdout.write(
+        `\r\x1b[K${chunk.toString().replace(/\r?\n|\r/g, '\x1b[K\r')}`
+      );
+    });
+
+    child.on('error', (err) => {
+      if (!quiet) {
+        process.stdout.write('\r\x1b[K');
+      }
+
+      subscriber.error(err);
+    });
     child.on('exit', (code) => {
+      if (!quiet) {
+        process.stdout.write('\r\x1b[K');
+      }
+
       if (code === 0) {
         subscriber.next(
           captureStdout ? Buffer.concat(stdoutChunks).toString() : ''
@@ -86,16 +159,557 @@ function runYtDlp(ytDlpBin, args, captureStdout) {
     });
 
     return () => {
-      if (!child.killed) {
-        child.kill();
+      if (child.killed) {
+        return;
       }
+
+      child.kill();
     };
   });
 }
 
+/**
+ * Initialize the working directory structure
+ * @param {string} cwd working directory path
+ * @param {string} downloadDirPath path to download directory
+ * @param {string} subscriptionDirPath path to subscription directory
+ * @param {string} lockFilePath path to lock file
+ * @returns {Observable<void>} Observable that completes when initialization is done
+ */
+function initializeWorkingDirectory(
+  cwd,
+  downloadDirPath,
+  subscriptionDirPath,
+  lockFilePath
+) {
+  return forkJoin([
+    fileExists(cwd),
+    fileExists(lockFilePath),
+    fileExists(downloadDirPath),
+    fileExists(subscriptionDirPath),
+  ]).pipe(
+    switchMap(
+      ([
+        cwdExists,
+        lockFileExists,
+        downloadDirExists,
+        subscriptionDirExists,
+      ]) => {
+        if (!cwdExists) {
+          return throwError(new Error(`Directory "${cwd}" does not exist.`));
+        }
+
+        if (!lockFileExists) {
+          return of([
+            lockFileExists,
+            undefined,
+            downloadDirExists,
+            subscriptionDirExists,
+          ]);
+        }
+
+        return isPreviousInstanceRunning(lockFilePath).then((isLocked) => [
+          lockFileExists,
+          isLocked,
+          downloadDirExists,
+          subscriptionDirExists,
+        ]);
+      }
+    ),
+    switchMap(
+      ([
+        lockFileExists,
+        isLocked,
+        downloadDirExists,
+        subscriptionDirExists,
+      ]) => {
+        if (isLocked) {
+          return throwError(
+            new Error(
+              `Another instance is already running at directory "${cwd}".`
+            )
+          );
+        }
+
+        const downloadDirPath$ = downloadDirExists
+          ? of(null)
+          : defer(() => mkdir(downloadDirPath, { recursive: true }));
+
+        const subscriptionDirPath$ = subscriptionDirExists
+          ? of(null)
+          : defer(() => mkdir(subscriptionDirPath, { recursive: true }));
+
+        const lockFile = JSON.stringify(
+          { pid: process.pid, startedAt: new Date().toISOString() },
+          null,
+          2
+        );
+        const lockFile$ = lockFileExists
+          ? defer(() =>
+              unlink(lockFilePath).then(() => writeFile(lockFilePath, lockFile))
+            )
+          : defer(() => writeFile(lockFilePath, lockFile));
+
+        return forkJoin([downloadDirPath$, subscriptionDirPath$, lockFile$]);
+      }
+    ),
+    switchMap(() => {
+      const subscriptionSample = {
+        url: 'https://www.youtube.com/@ChannelName/videos',
+        dateAfter: 'now-1month',
+        maxDurationInSecond: 1800,
+      };
+      return defer(() =>
+        writeFile(
+          join(subscriptionDirPath, 'sample.json'),
+          JSON.stringify(subscriptionSample, null, 2)
+        )
+      );
+    })
+  );
+}
+
+/**
+ * Parses the dateAfter property from a subscription file content and returns the corresponding moment object
+ * @param {SubscriptionFileContent} subscription - Subscription file content object containing the dateAfter property
+ * @returns {moment.Moment|null} Moment object representing the maximum upload moment, or null if invalid
+ */
+function getMinUploadMoment(subscription) {
+  const { dateAfter } = subscription;
+
+  if (!dateAfter) {
+    return;
+  }
+
+  const match = dateAfter.match(/^now-(\d+)(day|week|month|year)s?$/i);
+
+  if (!match) {
+    return;
+  }
+
+  const [_, amount, unit] = match;
+
+  if (!amount || !unit) {
+    return;
+  }
+
+  const minUploadMoment = moment().subtract(
+    parseInt(amount, 10),
+    unit.toLowerCase()
+  );
+
+  if (!minUploadMoment.isValid()) {
+    return;
+  }
+
+  return minUploadMoment;
+}
+
+/**
+ * Validates and returns the maximum duration in seconds from subscription file content
+ * @param {SubscriptionFileContent} subscription - Subscription file content object containing the maxDurationInSecond property
+ * @returns {number|null} The validated duration in seconds, or null if invalid
+ */
+function getMaxDurationInSecond(subscription) {
+  const { maxDurationInSecond } = subscription;
+
+  if (!Number.isInteger(maxDurationInSecond)) {
+    return;
+  }
+
+  return maxDurationInSecond;
+}
+
+/**
+ * Removes videos from the download directory that were uploaded after the specified max upload moment
+ * @param {string} subscriptionDownloadDirPath - Path to the subscription download directory
+ * @param {moment.Moment} minUploadMoment - The maximum upload moment after which videos should be removed
+ * @returns {Observable<void>} Observable that completes when expired videos are removed
+ */
+function removeExpiredVideos(subscriptionDownloadDirPath, minUploadMoment) {
+  return defer(() =>
+    readdir(subscriptionDownloadDirPath)
+      .then((fileNames) =>
+        fileNames.filter(
+          (fileName) =>
+            fileName.endsWith('.info.json') && !fileName.includes('[PL')
+        )
+      )
+      .then((videoInfoFileNames) =>
+        Promise.all(
+          videoInfoFileNames.reduce((acc, videoInfoFileName) => {
+            const videoInfoFilePath = join(
+              subscriptionDownloadDirPath,
+              videoInfoFileName
+            );
+
+            return [
+              ...acc,
+              readFile(videoInfoFilePath, 'utf8')
+                .then(JSON.parse)
+                .then(({ timestamp }) => {
+                  if (moment.unix(timestamp).isAfter(minUploadMoment)) {
+                    return null;
+                  }
+
+                  const videoFilePath = videoInfoFilePath.replace(
+                    /\.info\.json$/,
+                    '.mp4'
+                  );
+
+                  return Promise.all([
+                    unlink(videoFilePath).catch(() => {}),
+                    unlink(videoInfoFilePath),
+                  ]);
+                }),
+            ];
+          }, [])
+        )
+      )
+  );
+}
+
+/**
+ * Downloads a single video using yt-dlp
+ * @param {string} ytDlpBinPath - Path to the yt-dlp executable binary
+ * @param {string} subscriptionDownloadDirPath - Path to the download directory
+ * @param {VideoMetadata} video - Video object
+ * @param {boolean} quiet - If true, suppress output
+ * @returns {Observable<string>} Observable emitting stdout on success
+ */
+function downloadVideo(
+  ytDlpBinPath,
+  subscriptionDownloadDirPath,
+  video,
+  quiet
+) {
+  const { id, title, duration } = video;
+  log(`📥 Downloading ${title}`, quiet);
+
+  const outputFileNameTemplate = join(
+    subscriptionDownloadDirPath,
+    '%(title)s [%(id)s].%(ext)s'
+  );
+  const archiveFilePath = join(subscriptionDownloadDirPath, '.archive.txt');
+
+  return runYtDlp(
+    ytDlpBinPath,
+    [
+      id,
+      '-o',
+      outputFileNameTemplate,
+      '--download-archive',
+      archiveFilePath,
+      '--no-overwrites',
+      '--write-info-json',
+      // use Node.js to execute the JavaScript code required to solve YouTube's "challenges"
+      '--js-runtimes',
+      'node',
+      // automatically download and update the JavaScript "challenge solver" scripts directly from the official yt-dlp-ejs GitHub repository
+      '--remote-components',
+      'ejs:github',
+      // sensible format: best mp4 up to 1080p, or best available
+      '-f',
+      'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
+      '--merge-output-format',
+      'mp4',
+      '--ignore-errors',
+    ],
+    false,
+    quiet
+  ).pipe(
+    timeout(duration * 1000),
+    catchError((error) => {
+      log(`⚠️ Failed to download: ${title}. Error: ${error}`);
+      return EMPTY;
+    })
+  );
+}
+
+/**
+ * Downloads multiple videos sequentially using yt-dlp
+ * @param {string} ytDlpBinPath - Path to the yt-dlp executable binary
+ * @param {string} subscriptionDownloadDirPath - Path to the download directory
+ * @param {VideoMetadata[]} videos - Array of video objects
+ * @param {boolean} quiet - If true, suppress output
+ * @returns {Observable<string>} Observable that completes when all videos are downloaded
+ */
+function downloadVideos(
+  ytDlpBinPath,
+  subscriptionDownloadDirPath,
+  videos,
+  quiet
+) {
+  return of(...videos).pipe(
+    concatMap((video) =>
+      downloadVideo(ytDlpBinPath, subscriptionDownloadDirPath, video, quiet)
+    ),
+    last()
+  );
+}
+
+/**
+ * Downloads videos for a single subscription using yt-dlp.
+ * Reads the subscription JSON file, creates the download directory if needed,
+ * removes expired videos based on dateAfter configuration, and then downloads
+ * new videos using yt-dlp with specified options.
+ *
+ * @param {string} subscriptionFilePath - Path to the subscription JSON file
+ * @param {string} subscriptionDownloadDirPath - Path to the directory where videos will be downloaded
+ * @param {string} ytDlpBinPath - Path to the yt-dlp executable binary
+ * @param {boolean} quiet - If true, suppress yt-dlp output (use --quiet flag)
+ * @returns {Observable<void>} Observable that completes when subscription processing is done
+ * @throws {Error} If subscription file cannot be parsed, invalid URL is found, or directory creation fails
+ */
+function processSubscription(
+  subscriptionFilePath,
+  subscriptionDownloadDirPath,
+  ytDlpBinPath,
+  quiet
+) {
+  return forkJoin([
+    readFile(subscriptionFilePath),
+    fileExists(subscriptionDownloadDirPath),
+  ]).pipe(
+    switchMap(([subscriptionFile, subscriptionDownloadDirExists]) => {
+      log(`\x1b[1mSubscription ${subscriptionFilePath}\x1b[0m`, quiet);
+
+      /** @type {SubscriptionFileContent} */
+      let subscription;
+      try {
+        subscription = JSON.parse(subscriptionFile);
+      } catch (error) {
+        return throwError(
+          `Invalid subscription file: ${subscriptionFilePath}. Error: ${error}`
+        );
+      }
+
+      const { url } = subscription;
+
+      if (!url) {
+        return throwError(
+          `Invalid URL found in subscription file: ${subscriptionFilePath}`
+        );
+      }
+
+      return subscriptionDownloadDirExists
+        ? of(subscription)
+        : defer(() =>
+            mkdir(subscriptionDownloadDirPath, { recursive: true }).then(
+              () => subscription
+            )
+          );
+    }),
+    switchMap((subscription) => {
+      const { url } = subscription;
+      const minUploadMoment = getMinUploadMoment(subscription) || null;
+      const maxDurationInSecond = getMaxDurationInSecond(subscription) || null;
+
+      const playlistDump$ = runYtDlp(
+        ytDlpBinPath,
+        [
+          url,
+          '--dump-json',
+          // only look at the list level
+          '--flat-playlist',
+          // make best-effort to parse the upload date
+          '--extractor-args',
+          'youtubetab:approximate_date',
+        ],
+        true,
+        quiet
+      );
+
+      return forkJoin([
+        of(minUploadMoment),
+        of(maxDurationInSecond),
+        playlistDump$,
+        minUploadMoment
+          ? removeExpiredVideos(subscriptionDownloadDirPath, minUploadMoment)
+          : of(null),
+      ]);
+    }),
+    switchMap(([minUploadMoment, maxDurationInSecond, playlistDump]) => {
+      const videos = playlistDump.split('\n').reduce(
+        (acc, item) => {
+          if (!item) {
+            return acc;
+          }
+
+          /** @type VideoMetadata */
+          let video;
+          try {
+            video = JSON.parse(item);
+          } catch (error) {
+            return acc;
+          }
+
+          const { id, title, duration, upload_date } = video;
+
+          if (!id || !duration) {
+            return acc;
+          }
+
+          if (!upload_date) {
+            log(
+              `⚠️ Warning: upload date is missing from video: ${title}.`,
+              quiet
+            );
+          }
+
+          if (
+            minUploadMoment &&
+            upload_date &&
+            moment(upload_date, 'YYYYMMDD').isBefore(minUploadMoment)
+          ) {
+            return acc;
+          }
+
+          if (maxDurationInSecond && duration > maxDurationInSecond) {
+            return acc;
+          }
+
+          return id ? [...acc, { id, title, duration }] : acc;
+        },
+        /** @type Partial<VideoMetadata>[] */
+        []
+      );
+
+      if (!videos.length) {
+        log('⚠️ Warning: no matching video found.', quiet);
+        return EMPTY;
+      }
+
+      return downloadVideos(
+        ytDlpBinPath,
+        subscriptionDownloadDirPath,
+        videos,
+        quiet
+      );
+    }),
+    catchError((error) => {
+      if (!quiet) {
+        console.error(
+          `❌ Unable to process subscription "${subscriptionFilePath}". Error: ${error}`
+        );
+      }
+      return EMPTY;
+    })
+  );
+}
+
+/**
+ * Downloads videos from all subscription files in the subscription directory.
+ * Validates that required directories and binaries exist, creates/updates a lock file
+ * to prevent concurrent instances, and processes each subscription file by downloading
+ * videos using yt-dlp.
+ *
+ * @param {string} cwd - The current working directory path
+ * @param {string} downloadDirPath - Path to the download directory
+ * @param {string} subscriptionDirPath - Path to the subscription directory containing JSON files
+ * @param {string} lockFilePath - Path to the lock file for preventing concurrent runs
+ * @param {string} ytDlpBinPath - Path to the yt-dlp executable binary
+ * @param {boolean} quiet - If true, suppress yt-dlp output (use --quiet flag)
+ * @returns {Observable<void>} Observable that completes when all subscriptions are processed
+ * @throws {Error} If required directories or binary don't exist, or if another instance is running
+ */
+function downloadPlaylists(
+  cwd,
+  downloadDirPath,
+  subscriptionDirPath,
+  lockFilePath,
+  ytDlpBinPath,
+  quiet
+) {
+  return forkJoin([
+    fileExists(cwd),
+    fileExists(lockFilePath),
+    fileExists(downloadDirPath),
+    fileExists(subscriptionDirPath),
+    fileExists(ytDlpBinPath),
+  ]).pipe(
+    switchMap(
+      ([
+        cwdExists,
+        lockFileExists,
+        downloadDirExists,
+        subscriptionDirExists,
+        ytDlpBinExists,
+      ]) => {
+        if (!cwdExists) {
+          return throwError(new Error(`Directory "${cwd}" does not exist.`));
+        }
+
+        if (!downloadDirExists) {
+          return throwError(
+            new Error(
+              `Directory "${downloadDirPath}" does not exist. Run with --init first.`
+            )
+          );
+        }
+
+        if (!subscriptionDirExists) {
+          return throwError(
+            new Error(
+              `Directory "${subscriptionDirPath}" does not exist. Run with --init first.`
+            )
+          );
+        }
+
+        if (!ytDlpBinExists) {
+          return throwError(
+            new Error(
+              `Binary yt-dlp "${ytDlpBinPath}" does not exist. Specify with -Y /path/to/yt-dlp`
+            )
+          );
+        }
+
+        if (!lockFileExists) {
+          return of([lockFileExists, undefined]);
+        }
+
+        return isPreviousInstanceRunning(lockFilePath).then((isLocked) => [
+          lockFileExists,
+          isLocked,
+        ]);
+      }
+    ),
+    switchMap(([lockFileExists, isLocked]) => {
+      if (isLocked) {
+        return throwError(
+          new Error(
+            `Another instance is already running at directory "${cwd}".`
+          )
+        );
+      }
+
+      const lock = JSON.stringify(
+        { pid: process.pid, startedAt: new Date().toISOString() },
+        null,
+        2
+      );
+
+      const lockFile$ = lockFileExists
+        ? defer(() =>
+            unlink(lockFilePath).then(() => writeFile(lockFilePath, lock))
+          )
+        : defer(() => writeFile(lockFilePath, lock));
+
+      return lockFile$;
+    }),
+    switchMap(() => listSubscriptionFiles(subscriptionDirPath)),
+    concatMap(({ name }) =>
+      processSubscription(
+        join(subscriptionDirPath, name),
+        join(downloadDirPath, parse(name).name),
+        ytDlpBinPath,
+        quiet
+      )
+    )
+  );
+}
+
 module.exports = {
-  runYtDlp,
-  listSubscriptionFiles,
-  fileExists,
-  isPreviousInstanceRunning,
+  initializeWorkingDirectory,
+  downloadPlaylists,
 };

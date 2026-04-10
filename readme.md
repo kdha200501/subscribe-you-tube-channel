@@ -1,3 +1,9 @@
+## ⚠️ IMPORTANT DISCLAIMER
+
+This project is **experimental and for personal use only**. Use at your own risk. This tool interacts with YouTube's services and may be subject to YouTube's Terms of Service. The authors are not responsible for any issues that may arise from using this tool.
+
+---
+
 ## Description
 
 A CLI tool to download videos from YouTube playlists using `yt-dlp`. It:
@@ -42,15 +48,30 @@ $ sudo apt install ffmpeg
 
 
 
-## Usage
+# Installation
+```shell
+$ npm i -g subscribe-you-tube-channel
 
-### Installation
+$ mkdir ~/.subscribe-you-tube-channel
+$ subscribe-you-tube-channel init -C ~/.subscribe-you-tube-channel
+```
+
+### Options
 
 ```shell
-$ npm i -g grab-you-tube-playlist
+$ subscribe-you-tube-channel init -h
+Initialize the working directory
+Usage: subscribe-you-tube-channel init [options]
 
-$ mkdir ~/.grab-you-tube-playlist
-$ grab-you-tube-playlist -i -C ~/.grab-you-tube-playlist
+Options:
+  --version        Show version number                                                     [boolean]
+  -C, --directory  Specify the working directory
+                                                                          [string] [default: <$CWD>]
+  -q, --quiet      Do not output to stdout or stderr                      [boolean] [default: false]
+  -h, --help       Show help                                                               [boolean]
+
+Examples:
+  subscribe-you-tube-channel -C ~/.subscribe-you-tube-channel
 ```
 
 ### Manage subscriptions
@@ -58,7 +79,7 @@ $ grab-you-tube-playlist -i -C ~/.grab-you-tube-playlist
 Edit the sample subscription file with a real YouTube channel or playlist URL:
 
 ```shell
-$ vim ~/.grab-you-tube-playlist/subscriptions/sample.json
+$ vim ~/.subscribe-you-tube-channel/subscriptions/sample.json
 ```
 
 Example subscription file:
@@ -66,47 +87,71 @@ Example subscription file:
 ```json
 {
   "url": "https://www.youtube.com/@ChannelName/videos",
-  "maxVideos": 10
+  "dateAfter": "now-1month",
+  "maxDurationInSecond": 1800
 }
 ```
+
+> [!TIP]
+>
+> The `dateAfter` value follows the  `$ yt-dlp --dateafter` convention
+>
+> | **Unit**  | **Example**  | **Meaning**               |
+> | --------- | ------------ | ------------------------- |
+> | **day**   | `now-10days` | Since 10 days ago         |
+> | **week**  | `now-2weeks` | Since 14 days ago         |
+> | **month** | `now-1month` | Since roughly 30 days ago |
+> | **year**  | `now-1year`  | Since 365 days ago        |
+
+> [!TIP]
+>
+> The `maxDurationInSecond` value is passed to the `$ yt-dlp --match-filter` option with the `duration<=<maxDurationInSecond>` filter
+>
+> | **Example**      | **Meaning**                         |
+> | ----------------- | ----------------------------------- |
+> | `1800`            | Only videos shorter than 30 minutes |
+> | `3600`            | Only videos shorter than 1 hour   |
 
 Add more subscriptions by creating additional JSON files:
 
 ```shell
-$ touch ~/.grab-you-tube-playlist/subscriptions/another-playlist.json
-$ vim ~/.grab-you-tube-playlist/subscriptions/another-playlist.json
+$ touch ~/.subscribe-you-tube-channel/subscriptions/another-playlist.json
+$ vim ~/.subscribe-you-tube-channel/subscriptions/another-playlist.json
 ```
 
-### Run
+
+
+# Usage
 
 ```shell
-$ grab-you-tube-playlist -C ~/.grab-you-tube-playlist -Y /usr/bin/yt-dlp
+$ subscribe-you-tube-channel -C ~/.subscribe-you-tube-channel -Y /usr/bin/yt-dlp
 ```
 
 ### Options
 
 ```shell
-$ grab-you-tube-playlist -h
-Usage: grab-you-tube-playlist [options]
+$ subscribe-you-tube-channel -h
+subscribe-you-tube-channel
 
-Examples:
-  Initialize working directory:
-    $ grab-you-tube-playlist -i -C ~/.grab-you-tube-playlist
+Download playlists from subscriptions
+Usage: subscribe-you-tube-channel [options]
 
-  Download with custom directories:
-    $ grab-you-tube-playlist -C ~/.grab-you-tube-playlist -o ~/Videos -Y
-    /usr/bin/yt-dlp
+Commands:
+  subscribe-you-tube-channel init  Initialize the working directory
+  subscribe-you-tube-channel       Download playlists from subscriptions                   [default]
 
 Options:
-  --version                 Show version number                        [boolean]
+  --version                 Show version number                                            [boolean]
   -C, --directory           Specify the working directory
-                                   [string] [default: current working directory]
-  -i, --init                Initialize the working directory           [boolean]
+                                                                          [string] [default: <$CWD>]
   -o, --download-directory  Specify the download directory
-   [string] [default: "downloads" directory under the current working directory]
-  -Y, --yt-dlp-bin          Specify the path to yt-dlp binary[string] [required]
-  -q, --quiet               Do not output to stdout or stderr          [boolean]
-  -h, --help                Show help                                  [boolean]
+                                                                [string] [default: <$CWD/downloads>]
+  -Y, --yt-dlp-bin          Specify the path to yt-dlp binary                    [string] [required]
+  -q, --quiet               Do not output to stdout or stderr             [boolean] [default: false]
+  -h, --help                Show help                                                      [boolean]
+
+Examples:
+  subscribe-you-tube-channel -C ~/.subscribe-you-tube-channel -o ~/Videos -Y /usr/bin/yt-dlp
 ```
 
 ### Run from crontab
@@ -118,5 +163,5 @@ $ sudo crontab -e
 Insert the following (adjust paths and schedule):
 
 ```
-min hr1,hr2 * * * grab-you-tube-playlist -C ~/.grab-you-tube-playlist -o ~/Videos -Y /usr/bin/yt-dlp >/dev/null 2>&1
+min hr1,hr2 * * * subscribe-you-tube-channel main -C ~/.subscribe-you-tube-channel -o ~/Videos -Y /usr/bin/yt-dlp >/dev/null 2>&1
 ```
