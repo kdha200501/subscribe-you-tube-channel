@@ -40,13 +40,13 @@ module.exports = {
      * @param {Error|string} error Error message
      * @returns {undefined}
      */
-    function logError(error) {
+    const logError = (error) => {
       if (argv.q === true) {
         return;
       }
 
       console.error(error);
-    }
+    };
 
     const cleanupLock = () => {
       try {
