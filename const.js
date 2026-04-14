@@ -3,6 +3,7 @@ const path = {
   downloads: 'downloads',
   subscriptions: 'subscriptions',
   subscriptionSample: 'sample.json',
+  ytDlpArchive: '.archive.txt',
 };
 
 module.exports = {
