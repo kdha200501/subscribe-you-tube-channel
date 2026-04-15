@@ -29,6 +29,7 @@ const {
   catchError,
   last,
   timeout,
+  tap,
 } = require('rxjs/operators');
 const moment = require('moment');
 
@@ -394,7 +395,7 @@ const isVideoFilePreviouslyDownloaded = (archiveFilePath, videoId) =>
           return of(false);
         }
 
-        return readFile(archiveFilePath).then((ytDlpArchiveDump) => {
+        return readFile(archiveFilePath, 'utf8').then((ytDlpArchiveDump) => {
           if (!ytDlpArchiveDump) {
             return false;
           }
@@ -408,23 +409,26 @@ const isVideoFilePreviouslyDownloaded = (archiveFilePath, videoId) =>
            * // youtube consectetur
            * // youtube adipisicing
            */
-          const videoIds = ytDlpArchiveDump.split('\n').reduce((acc, item) => {
-            if (!item) {
-              return acc;
-            }
+          const videoIds = ytDlpArchiveDump
+            .toString()
+            .split('\n')
+            .reduce((acc, item) => {
+              if (!item) {
+                return acc;
+              }
 
-            if (!videoIdRegex.test(item)) {
-              return acc;
-            }
+              if (!videoIdRegex.test(item)) {
+                return acc;
+              }
 
-            const [_, _videoId] = item.match(videoIdRegex);
+              const [_, _videoId] = item.match(videoIdRegex);
 
-            if (!_videoId) {
-              return acc;
-            }
+              if (!_videoId) {
+                return acc;
+              }
 
-            return [...acc, _videoId];
-          }, []);
+              return [...acc, _videoId];
+            }, []);
 
           if (!videoIds.length) {
             return false;
@@ -451,7 +455,6 @@ const downloadVideo = (
   quiet
 ) => {
   const { id, title, duration } = video;
-  log(`📥 Downloading ${title}`, quiet);
 
   const outputFileNameTemplate = join(
     subscriptionDownloadDirPath,
@@ -459,39 +462,68 @@ const downloadVideo = (
   );
   const archiveFilePath = join(subscriptionDownloadDirPath, path.ytDlpArchive);
 
-  return /** @type {Observable<string>} */ (
-    runYtDlp(
-      ytDlpBinPath,
-      [
-        id,
-        '-o',
-        outputFileNameTemplate,
-        '--download-archive',
-        archiveFilePath,
-        '--no-overwrites',
-        '--write-info-json',
-        // use Node.js to execute the JavaScript code required to solve YouTube's "challenges"
-        '--js-runtimes',
-        'node',
-        // automatically download and update the JavaScript "challenge solver" scripts directly from the official yt-dlp-ejs GitHub repository
-        '--remote-components',
-        'ejs:github',
-        // sensible format: best mp4 up to 1080p, or best available
-        '-f',
-        'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
-        '--merge-output-format',
-        'mp4',
-        '--ignore-errors',
-      ],
-      false,
-      quiet
-    ).pipe(
-      timeout(duration * 1000),
-      catchError((error) => {
-        log(`⚠️ Failed to download: ${title}. Error: ${error}`);
-        return EMPTY;
-      })
-    )
+  return /** @type {Observable<string>} */ isVideoFilePreviouslyDownloaded(
+    archiveFilePath,
+    id
+  ).pipe(
+    switchMap((_isVideoFilePreviouslyDownloaded) => {
+      // if the video is previously downloaded
+      if (_isVideoFilePreviouslyDownloaded) {
+        // then skip the video
+        log(`🟢 Skipping previously downloaded video: ${title}`, quiet);
+        return of([_isVideoFilePreviouslyDownloaded]);
+      }
+
+      const downloadVideo$ = runYtDlp(
+        ytDlpBinPath,
+        [
+          id,
+          '-o',
+          outputFileNameTemplate,
+          '--download-archive',
+          archiveFilePath,
+          '--no-overwrites',
+          '--write-info-json',
+          // use Node.js to execute the JavaScript code required to solve YouTube's "challenges"
+          '--js-runtimes',
+          'node',
+          // automatically download and update the JavaScript "challenge solver" scripts directly from the official yt-dlp-ejs GitHub repository
+          '--remote-components',
+          'ejs:github',
+          // sensible format: best mp4 up to 1080p, or best available
+          '-f',
+          'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
+          '--merge-output-format',
+          'mp4',
+          '--ignore-errors',
+        ],
+        false,
+        quiet
+      );
+
+      // if the video is not previously downloaded,
+      // then download the video
+      log(`📥 Downloading video: ${title}`, quiet);
+      return forkJoin([of(_isVideoFilePreviouslyDownloaded), downloadVideo$]);
+    }),
+    switchMap(([_isVideoFilePreviouslyDownloaded]) =>
+      forkJoin([
+        of(_isVideoFilePreviouslyDownloaded),
+        isVideoFilePreviouslyDownloaded(archiveFilePath, id),
+      ])
+    ),
+    timeout(duration * 1000),
+    catchError((error) => {
+      log(`⚠️ Failed to download. Error: ${error}`);
+      return EMPTY;
+    }),
+    tap(([_isVideoFilePreviouslyDownloaded, _isVideoFileDownloaded]) => {
+      if (_isVideoFilePreviouslyDownloaded || !_isVideoFileDownloaded) {
+        return;
+      }
+
+      log('✨ Download completed');
+    })
   );
 };
 
@@ -539,7 +571,7 @@ const processSubscription = (
 ) =>
   /** @type {Observable<void>} */ (
     forkJoin([
-      readFile(subscriptionFilePath),
+      readFile(subscriptionFilePath, 'utf8'),
       fileExists(subscriptionDownloadDirPath),
     ]).pipe(
       switchMap(([subscriptionFile, subscriptionDownloadDirExists]) => {
