@@ -30,7 +30,6 @@ module.exports = {
       .option('o', {
         alias: 'download-directory',
         description: 'Specify the download directory',
-        default: join(process.cwd(), path.downloads),
         type: 'string',
       })
       .option('Y', {
@@ -49,7 +48,7 @@ module.exports = {
   handler: (argv) => {
     const cwd = argv.C;
     const lockFilePath = join(cwd, path.lock);
-    const downloadDirPath = argv.o || join(cwd, path.downloads);
+    const downloadDirPath = argv.o ?? join(cwd, path.downloads);
     const subscriptionDirPath = join(cwd, path.subscriptions);
     const ytDlpBinPath = argv.Y;
 
