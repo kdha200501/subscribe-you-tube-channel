@@ -1,6 +1,6 @@
 {
   "name": "subscribe-you-tube-channel",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Save playlist from YouTube",
   "bin": {
     "subscribe-you-tube-channel": "cli.js"
