@@ -492,7 +492,7 @@ const downloadVideo = (
           'ejs:github',
           // sensible format: best mp4 up to 1080p, or best available
           '-f',
-          'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
+          'bestvideo[height<=1080][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
           '--merge-output-format',
           'mp4',
           '--ignore-errors',
