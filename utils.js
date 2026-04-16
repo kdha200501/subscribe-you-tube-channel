@@ -605,7 +605,7 @@ const processSubscription = (
       }),
       switchMap((subscription) => {
         const { url } = subscription;
-        const minUploadMoment = getMinUploadMoment(subscription) || null;
+        const minUploadMoment = getMinUploadMoment(subscription) ?? null;
         const maxDurationInSecond =
           getMaxDurationInSecond(subscription) || null;
 
