@@ -72,6 +72,7 @@ module.exports = {
       cwd,
       join(cwd, path.downloads),
       join(cwd, path.subscriptions),
+      join(cwd, path.subscriptions, path.subscriptionSample),
       lockFilePath
     ).subscribe({
       complete: () => {

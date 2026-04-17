@@ -179,6 +179,7 @@ const runYtDlp = (ytDlpBin, args, captureStdout, quiet) => {
  * @param {string} cwd working directory path
  * @param {string} downloadDirPath path to download directory
  * @param {string} subscriptionDirPath path to subscription directory
+ * @param {string} subscriptionSampleFilePath path to subscription sample file
  * @param {string} lockFilePath path to lock file
  * @returns {Observable<void>} Observable that completes when initialization is done
  */
@@ -186,49 +187,59 @@ const initializeWorkingDirectory = (
   cwd,
   downloadDirPath,
   subscriptionDirPath,
+  subscriptionSampleFilePath,
   lockFilePath
 ) =>
   /** @type {Observable<void>} */ (
     forkJoin([
       fileExists(cwd),
-      fileExists(lockFilePath),
       fileExists(downloadDirPath),
       fileExists(subscriptionDirPath),
+      fileExists(subscriptionSampleFilePath),
+      fileExists(lockFilePath),
     ]).pipe(
       switchMap(
         ([
           cwdExists,
-          lockFileExists,
           downloadDirExists,
           subscriptionDirExists,
+          subscriptionSampleFileExists,
+          lockFileExists,
         ]) => {
           if (!cwdExists) {
             return throwError(new Error(`Directory "${cwd}" does not exist.`));
           }
 
+          // if there is no lock file in the working directory
           if (!lockFileExists) {
+            // then do not check if a previous instance is still running
             return of([
-              lockFileExists,
               undefined,
+              lockFileExists,
               downloadDirExists,
               subscriptionDirExists,
+              subscriptionSampleFileExists,
             ]);
           }
 
+          // if there is lock file in the working directory, and
+          // then check if a previous instance is till running
           return isPreviousInstanceRunning(lockFilePath).then((isLocked) => [
-            lockFileExists,
             isLocked,
+            lockFileExists,
             downloadDirExists,
             subscriptionDirExists,
+            subscriptionSampleFileExists,
           ]);
         }
       ),
       switchMap(
         ([
-          lockFileExists,
           isLocked,
+          lockFileExists,
           downloadDirExists,
           subscriptionDirExists,
+          subscriptionSampleFileExists,
         ]) => {
           if (isLocked) {
             return throwError(
@@ -238,43 +249,58 @@ const initializeWorkingDirectory = (
             );
           }
 
-          const downloadDirPath$ = downloadDirExists
-            ? of(null)
-            : defer(() => mkdir(downloadDirPath, { recursive: true }));
-
-          const subscriptionDirPath$ = subscriptionDirExists
-            ? of(null)
-            : defer(() => mkdir(subscriptionDirPath, { recursive: true }));
-
-          const lockFile = JSON.stringify(
-            { pid: process.pid, startedAt: new Date().toISOString() },
-            null,
-            2
+          /** @type {LockFileContent} */
+          const lockFileContent = {
+            pid: process.pid,
+            startedAt: new Date().toISOString(),
+          };
+          const lockFileInit$ = defer(() =>
+            (lockFileExists ? unlink(lockFilePath) : Promise.resolve()).then(
+              () =>
+                writeFile(
+                  lockFilePath,
+                  JSON.stringify(lockFileContent, null, 2)
+                )
+            )
           );
-          const lockFile$ = lockFileExists
-            ? defer(() =>
-                unlink(lockFilePath).then(() =>
-                  writeFile(lockFilePath, lockFile)
+
+          const downloadDirInit$ = defer(() =>
+            downloadDirExists
+              ? Promise.resolve()
+              : mkdir(downloadDirPath, { recursive: true })
+          );
+
+          /** @type {SubscriptionFileContent} */
+          const subscriptionFileContent = {
+            url: 'https://www.youtube.com/@ChannelName/videos',
+            dateAfter: 'now-1month',
+            maxDurationInSecond: 1800,
+          };
+
+          const subscriptionFileInit$ = defer(() =>
+            (subscriptionDirExists
+              ? Promise.resolve()
+              : mkdir(subscriptionDirPath, { recursive: true })
+            ).then(() =>
+              (subscriptionSampleFileExists
+                ? unlink(subscriptionSampleFilePath)
+                : Promise.resolve()
+              ).then(() =>
+                writeFile(
+                  join(subscriptionDirPath, path.subscriptionSample),
+                  JSON.stringify(subscriptionFileContent, null, 2)
                 )
               )
-            : defer(() => writeFile(lockFilePath, lockFile));
+            )
+          );
 
-          return forkJoin([downloadDirPath$, subscriptionDirPath$, lockFile$]);
+          return forkJoin([
+            lockFileInit$,
+            downloadDirInit$,
+            subscriptionFileInit$,
+          ]);
         }
-      ),
-      switchMap(() => {
-        const subscriptionSample = {
-          url: 'https://www.youtube.com/@ChannelName/videos',
-          dateAfter: 'now-1month',
-          maxDurationInSecond: 1800,
-        };
-        return defer(() =>
-          writeFile(
-            join(subscriptionDirPath, 'sample.json'),
-            JSON.stringify(subscriptionSample, null, 2)
-          )
-        );
-      })
+      )
     )
   );
 

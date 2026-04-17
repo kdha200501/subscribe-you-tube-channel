@@ -163,5 +163,5 @@ $ sudo crontab -e
 Insert the following (adjust paths and schedule):
 
 ```
-min hr1,hr2 * * * subscribe-you-tube-channel main -C ~/.subscribe-you-tube-channel -o ~/Videos -Y /usr/bin/yt-dlp >/dev/null 2>&1
+min hr1,hr2 * * * /bin/bash -l -c '. "/home/pi/.nvm/nvm.sh" && subscribe-you-tube-channel -C /home/pi/.subscribe-you-tube-channel/ -o /home/pi/Downloads/YouTube/ -Y /home/pi/.local/bin/yt-dlp --quiet >/dev/null 2>&1'
 ```
