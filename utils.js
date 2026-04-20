@@ -10,7 +10,7 @@ const {
 } = require('fs/promises');
 const { join, parse, dirname, delimiter } = require('path');
 const process = require('process');
-const { findProcess } = require('find-process/lib/find_process');
+const find = require('find-process');
 const { spawn } = require('child_process');
 const {
   Observable,
@@ -58,7 +58,7 @@ const isPreviousInstanceRunning = (lockFilePath) =>
   readFile(lockFilePath, 'utf8')
     .then(JSON.parse)
     .then((/** @type {LockFileContent} */ lockFileContent) =>
-      findProcess({ pid: lockFileContent.pid })
+      find('pid', lockFileContent.pid)
     ) /** @param {unknown[]} results */
     .then((results) => !!results[0]);
 
@@ -629,36 +629,42 @@ const processSubscription = (
               )
             );
       }),
-      switchMap((subscription) => {
-        const { url } = subscription;
-        const minUploadMoment = getMinUploadMoment(subscription) ?? null;
-        const maxDurationInSecond =
-          getMaxDurationInSecond(subscription) || null;
+      switchMap(
+        /** @param {SubscriptionFileContent} subscription */
+        (subscription) => {
+          const { url } = subscription;
+          const minUploadMoment = getMinUploadMoment(subscription) ?? null;
+          const maxDurationInSecond =
+            getMaxDurationInSecond(subscription) || null;
 
-        const playlistDump$ = runYtDlp(
-          ytDlpBinPath,
-          [
-            url,
-            '--dump-json',
-            // only look at the list level
-            '--flat-playlist',
-            // make best-effort to parse the upload date
-            '--extractor-args',
-            'youtubetab:approximate_date',
-          ],
-          true,
-          quiet
-        );
+          const playlistDump$ = runYtDlp(
+            ytDlpBinPath,
+            [
+              url,
+              '--dump-json',
+              // only look at the list level
+              '--flat-playlist',
+              // make best-effort to parse the upload date
+              '--extractor-args',
+              'youtubetab:approximate_date',
+            ],
+            true,
+            quiet
+          );
 
-        return forkJoin([
-          of(minUploadMoment),
-          of(maxDurationInSecond),
-          playlistDump$,
-          minUploadMoment
-            ? removeExpiredVideos(subscriptionDownloadDirPath, minUploadMoment)
-            : of(null),
-        ]);
-      }),
+          return forkJoin([
+            of(minUploadMoment),
+            of(maxDurationInSecond),
+            playlistDump$,
+            minUploadMoment
+              ? removeExpiredVideos(
+                  subscriptionDownloadDirPath,
+                  minUploadMoment
+                )
+              : of(null),
+          ]);
+        }
+      ),
       switchMap(([minUploadMoment, maxDurationInSecond, playlistDump]) => {
         const videos = playlistDump.split('\n').reduce(
           (acc, item) => {
@@ -729,7 +735,7 @@ const processSubscription = (
   );
 
 /**
- * Downloads videos from all subscription files in the subscription directory.
+ * Downloads videos from all playlists configured in subscription files'.
  * Validates that required directories and binaries exist, creates/updates a lock file
  * to prevent concurrent instances, and processes each subscription file by downloading
  * videos using yt-dlp.
@@ -743,7 +749,7 @@ const processSubscription = (
  * @returns {Observable<void>} Observable that completes when all subscriptions are processed
  * @throws {Error} If required directories or binary don't exist, or if another instance is running
  */
-const downloadPlaylists = (
+const downloadFromPlaylists = (
   cwd,
   downloadDirPath,
   subscriptionDirPath,
@@ -814,19 +820,18 @@ const downloadPlaylists = (
           );
         }
 
-        const lock = JSON.stringify(
-          { pid: process.pid, startedAt: new Date().toISOString() },
-          null,
-          2
+        /** @type {LockFileContent} */
+        const lockFileContent = {
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+        };
+        const lockFileInit$ = defer(() =>
+          (lockFileExists ? unlink(lockFilePath) : Promise.resolve()).then(() =>
+            writeFile(lockFilePath, JSON.stringify(lockFileContent, null, 2))
+          )
         );
 
-        const lockFile$ = lockFileExists
-          ? defer(() =>
-              unlink(lockFilePath).then(() => writeFile(lockFilePath, lock))
-            )
-          : defer(() => writeFile(lockFilePath, lock));
-
-        return lockFile$;
+        return lockFileInit$;
       }),
       switchMap(() => listSubscriptionFiles(subscriptionDirPath)),
       concatMap(({ name }) =>
@@ -842,5 +847,5 @@ const downloadPlaylists = (
 
 module.exports = {
   initializeWorkingDirectory,
-  downloadPlaylists,
+  downloadFromPlaylists,
 };

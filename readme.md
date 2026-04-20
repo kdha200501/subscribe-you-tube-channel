@@ -105,7 +105,7 @@ Example subscription file:
 
 > [!TIP]
 >
-> The `maxDurationInSecond` value is passed to the `$ yt-dlp --match-filter` option with the `duration<=<maxDurationInSecond>` filter
+> The `maxDurationInSecond` configuration is the equivalent of `$ yt-dlp --match-filter` option with a `duration<=<maxDurationInSecond>` filter
 >
 > | **Example**      | **Meaning**                         |
 > | ----------------- | ----------------------------------- |
@@ -133,12 +133,12 @@ $ subscribe-you-tube-channel -C ~/.subscribe-you-tube-channel -Y /usr/bin/yt-dlp
 $ subscribe-you-tube-channel -h
 subscribe-you-tube-channel
 
-Download playlists from subscriptions
+Download videos from subscribed playlists
 Usage: subscribe-you-tube-channel [options]
 
 Commands:
   subscribe-you-tube-channel init  Initialize the working directory
-  subscribe-you-tube-channel       Download playlists from subscriptions                   [default]
+  subscribe-you-tube-channel       Download videos from subscribed playlists               [default]
 
 Options:
   --version                 Show version number                                            [boolean]

@@ -79,7 +79,7 @@ module.exports = {
         process.exit(0);
       },
       error: (error) => {
-        logError(`❌ Initialize failed with Error: ${error}`);
+        logError(`❌ Failed to initialize working directory. Error: ${error}`);
         process.exit(1);
       },
     });

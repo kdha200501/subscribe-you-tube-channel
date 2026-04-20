@@ -5,9 +5,9 @@ const { join } = require('path');
 const process = require('process');
 
 const { path } = require('../const');
-const { downloadPlaylists } = require('../utils');
+const { downloadFromPlaylists } = require('../utils');
 
-const describe = 'Download playlists from subscriptions';
+const describe = 'Download videos from subscribed playlists';
 
 /** @type {import('yargs').CommandModule<{}, MainArgs>} */
 module.exports = {
@@ -84,8 +84,8 @@ module.exports = {
       process.exit(143);
     });
 
-    // Download playlists
-    downloadPlaylists(
+    // Download from playlists
+    downloadFromPlaylists(
       cwd,
       downloadDirPath,
       subscriptionDirPath,
@@ -97,7 +97,7 @@ module.exports = {
         process.exit(0);
       },
       error: (error) => {
-        logError(`❌ Download subscription failed with Error: ${error}`);
+        logError(`❌ Failed to download from playlists. Error: ${error}`);
         process.exit(1);
       },
     });
